@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -10,16 +9,19 @@ import (
 // Game is a structure holding a single instance of Conway MMO
 type Game struct {
 	board             GameBoard
-	userNotifChannels []chan GameUpdate
+	userNotifChannels []chan *GameUpdate
 	commandChannel    chan *UserCommand
 	lock              sync.Mutex
 }
 
 // GameSize is the size of the game board
-const GameSize = 1000
+const GameSize = 500
+
+// EmptyCell value representing an empty (dead) cell
+const EmptyCell int = -1
 
 // GameBoard type for the game board
-type GameBoard [GameSize][GameSize]byte
+type GameBoard [GameSize][GameSize]int
 
 // GameUpdate type for updates sent to users
 type GameUpdate []byte
@@ -35,29 +37,30 @@ const UserCommandMaxCellsDim = 8
 
 // UserCommand type representing a user's command to alter the board
 type UserCommand struct {
-	Coords Point                                               `json:"coords"`
-	Cells  [UserCommandMaxCellsDim][UserCommandMaxCellsDim]int `json:"cells"`
+	Coords Point
+	Cells  [UserCommandMaxCellsDim][UserCommandMaxCellsDim]int
+	Color  int
 }
 
 // NewGame creates a new Game instance
 func NewGame() *Game {
 	return &Game{
 		GameBoard{},
-		make([]chan GameUpdate, 0, 100),
+		make([]chan *GameUpdate, 0, 100),
 		make(chan *UserCommand, 100),
 		sync.Mutex{},
 	}
 }
 
 // AddUserChannel adds a channel to the list of channels notified on game update
-func (g *Game) AddUserChannel(ch chan GameUpdate) {
+func (g *Game) AddUserChannel(ch chan *GameUpdate) {
 	g.lock.Lock()
 	g.userNotifChannels = append(g.userNotifChannels, ch)
 	g.lock.Unlock()
 }
 
 // RemoveUserChannel removes a channel from the list of channels notified on game update
-func (g *Game) RemoveUserChannel(ch chan GameUpdate) bool {
+func (g *Game) RemoveUserChannel(ch chan *GameUpdate) bool {
 	g.lock.Lock()
 
 	foundIdx := -1
@@ -82,7 +85,7 @@ func (g *Game) RemoveUserChannel(ch chan GameUpdate) bool {
 	return true
 }
 
-func notifyUser(ch chan GameUpdate, update GameUpdate) {
+func notifyUser(ch chan *GameUpdate, update *GameUpdate) {
 	ch <- update
 }
 
@@ -90,51 +93,69 @@ func (g *Game) notifyUsers(update GameUpdate) {
 	g.lock.Lock()
 
 	for _, ch := range g.userNotifChannels {
-		go notifyUser(ch, update)
+		go notifyUser(ch, &update)
 	}
 
 	g.lock.Unlock()
 }
 
-func countNeighbours(board *GameBoard, x, y int) int {
+func countNeighbours(board *GameBoard, x, y int) (int, int) {
 	num := 0
+	colors := make(map[int]int)
+	majorityColor := board[x][y]
+	colors[majorityColor] = 1
 
 	for i := -1; i <= 1; i++ {
 		for j := -1; j <= 1; j++ {
-			nX := x + i
-			nY := y + j
+			nX := (x + i) % GameSize
+			nY := (y + j) % GameSize
 
-			if nX >= 0 && nX < GameSize && nY >= 0 && nY < GameSize && !(i == 0 && j == 0) && board[nX][nY] == 1 {
+			if nX < 0 {
+				nX = GameSize + nX
+			}
+
+			if nY < 0 {
+				nY = GameSize + nY
+			}
+
+			if !(i == 0 && j == 0) && board[nX][nY] != EmptyCell {
 				num++
+
+				color := board[nX][nY]
+				colors[color]++
+
+				if colors[color] > colors[majorityColor] {
+					majorityColor = color
+				}
 			}
 		}
 	}
 
-	return num
+	return num, majorityColor
 }
 
 func (g *Game) calcGameUpdate() GameUpdate {
-	update := make([]int, 100)
+	update := make([]int, 0)
 
 	oldBoard := g.board
 	g.board = GameBoard{}
 
 	for x := range oldBoard {
 		for y := range oldBoard[x] {
-			neighbours := countNeighbours(&oldBoard, x, y)
+			neighbours, majorityColor := countNeighbours(&oldBoard, x, y)
 
-			if oldBoard[x][y] == 1 && (neighbours < 2 || neighbours > 3) {
-				g.board[x][y] = 0
-			} else if oldBoard[x][y] == 1 && (neighbours == 2 || neighbours == 3) {
-				g.board[x][y] = 1
-			} else if oldBoard[x][y] == 0 && neighbours == 3 {
-				g.board[x][y] = 1
+			if oldBoard[x][y] != EmptyCell && (neighbours < 2 || neighbours > 3) {
+				g.board[x][y] = EmptyCell
+			} else if oldBoard[x][y] != EmptyCell && (neighbours == 2 || neighbours == 3) {
+				g.board[x][y] = majorityColor
+			} else if oldBoard[x][y] == EmptyCell && (neighbours == 3 || neighbours == 6) {
+				g.board[x][y] = majorityColor
 			} else {
-				g.board[x][y] = 0
+				g.board[x][y] = EmptyCell
 			}
 
-			if g.board[x][y] == 1 {
-				update = append(update, x, y)
+			if g.board[x][y] != EmptyCell {
+				update = append(update, x, y, g.board[x][y])
 			}
 		}
 	}
@@ -154,7 +175,9 @@ func (g *Game) ApplyCommand(cmd *UserCommand) {
 
 	for i := range cmd.Cells {
 		for j := range cmd.Cells[i] {
-			g.board[x+i][y+j] = byte(cmd.Cells[i][j])
+			if cmd.Cells[i][j] == 1 {
+				g.board[x+i][y+j] = cmd.Color
+			}
 		}
 	}
 }
@@ -164,24 +187,26 @@ func (g *Game) StartGameLoop() {
 	for x := range g.board {
 		for y := range g.board[x] {
 			var r = rand.Intn(100)
-			if r > 90 {
-				g.board[x][y] = 1
+			if r > 50 {
+				g.board[x][y] = 0
+			} else {
+				g.board[x][y] = EmptyCell
 			}
 		}
 	}
 
 	ticker := time.NewTicker(time.Millisecond * 500)
 
-	lastUpdate := time.Now().UnixNano()
+	// lastUpdate := time.Now().UnixNano()
 
 	for {
 		select {
 		case <-ticker.C:
 			update := g.calcGameUpdate()
 			g.notifyUsers(update)
-			timeNow := time.Now().UnixNano()
-			fmt.Printf("Update after %dms\n", (timeNow-lastUpdate)/1000000)
-			lastUpdate = timeNow
+			// timeNow := time.Now().UnixNano()
+			// fmt.Printf("Update after %dms\n", (timeNow-lastUpdate)/1000000)
+			// lastUpdate = timeNow
 		case cmd := <-g.commandChannel:
 			g.ApplyCommand(cmd)
 		}
