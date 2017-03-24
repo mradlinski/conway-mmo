@@ -2,43 +2,49 @@ package main
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-// UserCommandMsg type representing a user's command to alter the board, as it came directly from the user
-type UserCommandMsg struct {
-	Coords Point                                               `json:"coords"`
-	Cells  [UserCommandMaxCellsDim][UserCommandMaxCellsDim]int `json:"cells"`
-}
-
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
 }
 
-func commandListener(c *websocket.Conn, ch chan *UserCommand, userColor int) {
+const maxUserReqBurst = 100
+
+func proxyUserCommands(game *Game, user *User) {
+	limiter := make(chan bool, maxUserReqBurst)
+
+	for i := 0; i < maxUserReqBurst; i++ {
+		limiter <- true
+	}
+
+	go func() {
+		for range time.Tick(time.Second) {
+			if !user.IsConnected() {
+				break
+			}
+
+			limiter <- true
+		}
+
+		close(limiter)
+	}()
+
 	for {
-		cmd := UserCommandMsg{}
-		err := c.ReadJSON(&cmd)
+		cmd, err := user.ReadCommand()
 		if err != nil {
 			break
 		}
 
-		cmdWithColor := UserCommand{
-			Coords: cmd.Coords,
-			Cells:  cmd.Cells,
-			Color:  userColor,
-		}
-
-		ch <- &cmdWithColor
-	}
-}
-
-func userUpdateLoop(c *websocket.Conn, ch chan *GameUpdate) {
-	for data := range ch {
-		err := c.WriteMessage(websocket.BinaryMessage, *data)
-		if err != nil {
-			return
+		select {
+		case <-limiter:
+			game.commandChannel <- cmd
+		default:
+			continue
 		}
 	}
 }
@@ -50,18 +56,16 @@ func setupGameHandler(game *Game, getColor func() int) {
 			return
 		}
 
-		defer c.Close()
+		c.SetReadLimit(1000)
 
-		userColor := getColor()
-		go commandListener(c, game.commandChannel, userColor)
+		user := NewUser(c, getColor())
 
-		dataChannel := make(chan *GameUpdate)
-		defer close(dataChannel)
+		defer user.Disconnect()
 
-		game.AddUserChannel(dataChannel)
-		defer game.RemoveUserChannel(dataChannel)
+		game.AddUser(user)
+		defer game.RemoveUser(user)
 
-		userUpdateLoop(c, dataChannel)
+		proxyUserCommands(game, user)
 	})
 }
 
@@ -74,5 +78,5 @@ func StartServer() error {
 
 	setupGameHandler(game, getColor)
 
-	return http.ListenAndServe("localhost:8000", nil)
+	return http.ListenAndServe("0.0.0.0:8000", nil)
 }

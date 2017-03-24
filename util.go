@@ -8,6 +8,12 @@ import (
 	colorful "github.com/lucasb-eyer/go-colorful"
 )
 
+// Point represents a point on a grid
+type Point struct {
+	X int `json:"x"`
+	Y int `json:"y"`
+}
+
 func convertIntsToBytes(ints []int) []byte {
 	b := new(bytes.Buffer)
 
@@ -30,14 +36,15 @@ func colorToRGBInt(c colorful.Color) int {
 }
 
 func initializeColorPicker() func() int {
-	palette, err := colorful.SoftPalette(300)
-	if err != nil {
-		panic(err)
-	}
+	// palette, err := colorful.SoftPalette(300)
+	// if err != nil {
+	// 	panic(err)
+	// }
 
 	return func() int {
-		c := palette[rand.Intn(300)]
+		c := Colors[rand.Intn(len(Colors))]
+		return c
 
-		return colorToRGBInt(c)
+		// return colorToRGBInt(c)
 	}
 }
