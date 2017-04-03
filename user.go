@@ -31,6 +31,7 @@ type UserCommand struct {
 // UserCommandMaxCellsDim is the maximum size of the grid sent in a user command
 const UserCommandMaxCellsDim = 8
 
+// UserCommandPayload represents the exact command the user sent
 type UserCommandPayload struct {
 	Coords Point                                               `json:"coords"`
 	Cells  [UserCommandMaxCellsDim][UserCommandMaxCellsDim]int `json:"cells"`

@@ -1,5 +1,6 @@
 package main
 
+// Colors used as player colors
 var Colors = [...]int{
 	0x5fa2bf,
 	0x7bf289,

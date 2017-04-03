@@ -17,6 +17,7 @@ type Game struct {
 // GameSize is the size of the game board
 const GameSize = 500
 
+// PredefinedCell value representing a server-filled cell (without player color)
 const PredefinedCell int = 0
 
 // EmptyCell value representing an empty (dead) cell
@@ -38,7 +39,7 @@ func NewGame() *Game {
 	}
 }
 
-// AddUserChannel adds a channel to the list of channels notified on game update
+// AddUser adds a user to the game
 func (g *Game) AddUser(u *User) {
 	g.lock.Lock()
 	defer g.lock.Unlock()
@@ -46,7 +47,7 @@ func (g *Game) AddUser(u *User) {
 	g.users = append(g.users, u)
 }
 
-// RemoveUserChannel removes a channel from the list of channels notified on game update
+// RemoveUser removes a user from the game
 func (g *Game) RemoveUser(u *User) bool {
 	g.lock.Lock()
 	defer g.lock.Unlock()
@@ -179,16 +180,11 @@ func (g *Game) StartGameLoop() {
 
 	ticker := time.NewTicker(time.Millisecond * 500)
 
-	// lastUpdate := time.Now().UnixNano()
-
 	for {
 		select {
 		case <-ticker.C:
 			update := g.calcGameUpdate()
 			g.notifyUsers(update)
-			// timeNow := time.Now().UnixNano()
-			// fmt.Printf("Update after %dms\n", (timeNow-lastUpdate)/1000000)
-			// lastUpdate = timeNow
 		case cmd := <-g.commandChannel:
 			g.ApplyCommand(cmd)
 		}
